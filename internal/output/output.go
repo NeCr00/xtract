@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 // FormatOutput writes results to the configured output destination in the

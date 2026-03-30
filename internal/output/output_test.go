@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 func testResults() []model.Result {

@@ -3,7 +3,7 @@ package parser
 import (
 	"strings"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 // tagURLAttributes returns the attributes that carry URLs for a given HTML tag.

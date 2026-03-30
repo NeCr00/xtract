@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 // ExtractLayer3 runs all Layer 3 (Framework-Aware) techniques and returns results.

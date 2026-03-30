@@ -3,7 +3,7 @@ package extract
 import (
 	"strings"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 // ExtractLayer4 runs all Layer 4 (Configuration & Metadata) techniques and returns results.

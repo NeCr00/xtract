@@ -3,7 +3,7 @@ package parser
 import (
 	"strings"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 // ParseCSS extracts URLs from CSS content including url(), @import, and @font-face.

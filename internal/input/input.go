@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Necr00/xtract/internal/model"
+	"github.com/NeCr00/xtract/internal/model"
 )
 
 // supportedExtensions lists file extensions that the tool can process.
