@@ -13,11 +13,47 @@ import (
 	"github.com/NeCr00/xtract/internal/parser"
 )
 
+// Stats tracks extraction progress for the CLI.
+type Stats struct {
+	mu         sync.Mutex
+	TotalItems int
+	Processed  int
+	TotalURLs  int
+	Errors     int
+}
+
+// RecordItem records a processed item and its extracted URL count.
+func (s *Stats) RecordItem(urls int) {
+	s.mu.Lock()
+	s.Processed++
+	s.TotalURLs += urls
+	s.mu.Unlock()
+}
+
+// RecordError increments the error counter.
+func (s *Stats) RecordError() {
+	s.mu.Lock()
+	s.Errors++
+	s.mu.Unlock()
+}
+
+// Snapshot returns a copy of the current stats, safe to read without locks.
+func (s *Stats) Snapshot() (totalItems, processed, totalURLs, errors int) {
+	s.mu.Lock()
+	totalItems = s.TotalItems
+	processed = s.Processed
+	totalURLs = s.TotalURLs
+	errors = s.Errors
+	s.mu.Unlock()
+	return
+}
+
 // RunEngine orchestrates parallel extraction across all input items.
 // It collects inputs, spins up a worker pool, runs all extraction layers
 // and file-type parsers, deduplicates results, applies filters, and
-// returns sorted results.
-func RunEngine(cfg *model.Config) []model.Result {
+// returns sorted results. If onProgress is non-nil, it is called after
+// each item is processed with the current stats.
+func RunEngine(cfg *model.Config, onProgress func(stats *Stats)) []model.Result {
 	items := input.CollectInputs(cfg)
 	if len(items) == 0 {
 		return nil
@@ -28,6 +64,8 @@ func RunEngine(cfg *model.Config) []model.Result {
 	if threads < 1 {
 		threads = 1
 	}
+
+	stats := &Stats{TotalItems: len(items)}
 
 	// Create a buffered channel for work distribution.
 	work := make(chan model.InputItem, len(items))
@@ -43,7 +81,7 @@ func RunEngine(cfg *model.Config) []model.Result {
 		go func() {
 			defer wg.Done()
 			for item := range work {
-				processItem(item, cfg, rs)
+				processItem(item, cfg, rs, stats, onProgress)
 			}
 		}()
 	}
@@ -59,7 +97,7 @@ func RunEngine(cfg *model.Config) []model.Result {
 // processItem handles a single input item: fetches/reads content,
 // detects file type, runs parsers and extraction layers, and adds
 // results to the shared ResultSet.
-func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet) {
+func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet, stats *Stats, onProgress func(stats *Stats)) {
 	var content []byte
 	var err error
 	var fileName string
@@ -70,13 +108,26 @@ func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet) {
 	case model.InputURL:
 		result, fetchErr := input.FetchURL(item.Path, cfg.Timeout)
 		if fetchErr != nil {
-			fmt.Fprintf(os.Stderr, "[error] fetching %s: %v\n", item.Path, fetchErr)
+			if cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[error] fetching %s: %v\n", item.Path, fetchErr)
+			}
+			stats.RecordError()
+			stats.RecordItem(0)
+			if onProgress != nil {
+				onProgress(stats)
+			}
 			return
 		}
 		content = result.Body
 		contentType = result.ContentType
 		if input.IsBinary(content) {
-			fmt.Fprintf(os.Stderr, "[skip] %s appears to be binary\n", item.Path)
+			if cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[skip] %s appears to be binary\n", item.Path)
+			}
+			stats.RecordItem(0)
+			if onProgress != nil {
+				onProgress(stats)
+			}
 			return
 		}
 		fileName = item.Path
@@ -84,7 +135,14 @@ func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet) {
 	case model.InputFile:
 		content, err = input.ReadFile(item.Path, cfg.MaxSizeMB)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[error] reading %s: %v\n", item.Path, err)
+			if cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[error] reading %s: %v\n", item.Path, err)
+			}
+			stats.RecordError()
+			stats.RecordItem(0)
+			if onProgress != nil {
+				onProgress(stats)
+			}
 			return
 		}
 		fileName = item.Path
@@ -98,6 +156,10 @@ func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet) {
 	}
 
 	if len(content) == 0 {
+		stats.RecordItem(0)
+		if onProgress != nil {
+			onProgress(stats)
+		}
 		return
 	}
 
@@ -110,10 +172,13 @@ func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet) {
 	if fileType == "unknown" && len(content) > 0 {
 		fileType = input.SniffFileType(content)
 	}
+
+	lineIdx := model.NewLineIndex(string(content))
 	ctx := &model.ExtractionContext{
 		Content:  string(content),
 		FileName: fileName,
 		FileType: fileType,
+		Lines:    lineIdx,
 	}
 
 	var localResults []model.Result
@@ -143,10 +208,15 @@ func processItem(item model.InputItem, cfg *model.Config, rs *model.ResultSet) {
 	localResults = append(localResults, extract.RunAllLayers(ctx)...)
 
 	// Add all results to the shared set.
-	rs.AddAll(localResults)
+	added := rs.AddAll(localResults)
 
 	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "[%s] %d URLs found\n", fileName, len(localResults))
+	}
+
+	stats.RecordItem(added)
+	if onProgress != nil {
+		onProgress(stats)
 	}
 }
 

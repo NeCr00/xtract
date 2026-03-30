@@ -2,6 +2,7 @@ package model
 
 import (
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -27,6 +28,37 @@ func LineNumber(content string, offset int) int {
 		}
 	}
 	return line
+}
+
+// LineIndex caches newline positions for O(log n) line number lookups.
+type LineIndex struct {
+	offsets []int // byte offset of each '\n'
+}
+
+// NewLineIndex builds a line index from content.
+func NewLineIndex(content string) *LineIndex {
+	offsets := make([]int, 0, strings.Count(content, "\n")+1)
+	for i, b := range []byte(content) {
+		if b == '\n' {
+			offsets = append(offsets, i)
+		}
+	}
+	return &LineIndex{offsets: offsets}
+}
+
+// Line returns the 1-based line number for the given byte offset.
+func (li *LineIndex) Line(offset int) int {
+	// Binary search: find how many newlines are before offset
+	lo, hi := 0, len(li.offsets)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if li.offsets[mid] < offset {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo + 1
 }
 
 // ResultSet is a concurrent-safe deduplicated collection of results.
@@ -60,11 +92,23 @@ func (rs *ResultSet) Add(r Result) bool {
 	return true
 }
 
-// AddAll adds multiple results.
-func (rs *ResultSet) AddAll(results []Result) {
+// AddAll adds multiple results, returning the number of new results added.
+func (rs *ResultSet) AddAll(results []Result) int {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	added := 0
 	for _, r := range results {
-		rs.Add(r)
+		key := r.URL
+		if r.HTTPMethod != "" {
+			key = r.HTTPMethod + " " + r.URL
+		}
+		if !rs.seen[key] {
+			rs.seen[key] = true
+			rs.results = append(rs.results, r)
+			added++
+		}
 	}
+	return added
 }
 
 // Results returns all collected results.

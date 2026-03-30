@@ -8,7 +8,7 @@ import (
 
 func TestRunEngine_NoInputs(t *testing.T) {
 	cfg := &model.Config{Threads: 1}
-	results := RunEngine(cfg)
+	results := RunEngine(cfg, nil)
 	if len(results) != 0 {
 		t.Errorf("Expected 0 results for no inputs, got %d", len(results))
 	}
@@ -20,7 +20,7 @@ func TestRunEngine_SingleFile(t *testing.T) {
 		Threads:   1,
 		MaxSizeMB: 100,
 	}
-	results := RunEngine(cfg)
+	results := RunEngine(cfg, nil)
 	if len(results) == 0 {
 		t.Error("Expected results from layer1_test.js, got 0")
 	}
@@ -32,7 +32,7 @@ func TestRunEngine_Directory(t *testing.T) {
 		Threads:   2,
 		MaxSizeMB: 100,
 	}
-	results := RunEngine(cfg)
+	results := RunEngine(cfg, nil)
 	if len(results) < 100 {
 		t.Errorf("Expected 100+ results from testdata directory, got %d", len(results))
 	}

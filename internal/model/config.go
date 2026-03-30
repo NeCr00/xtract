@@ -12,6 +12,7 @@ type Config struct {
 	MaxSizeMB      int
 	Verbose        bool
 	Debug          bool
+	Quiet          bool
 	ListTechniques bool
 	OutputFile     string
 	JSONOutput     bool
