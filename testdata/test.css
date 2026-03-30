@@ -1,0 +1,32 @@
+/* CSS Test File for URL Extraction */
+
+@import url('/css/reset.css');
+@import "/css/variables.css";
+
+@font-face {
+    font-family: 'CustomFont';
+    src: url('/fonts/custom.woff2') format('woff2'),
+         url('/fonts/custom.woff') format('woff');
+}
+
+body {
+    background-image: url('/images/background.jpg');
+}
+
+.hero {
+    background: url("https://cdn.example.com/images/hero-bg.png") no-repeat center;
+}
+
+.icon-arrow {
+    background-image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==);
+}
+
+.logo {
+    background: url('/images/logo.svg');
+}
+
+@media (min-width: 768px) {
+    .responsive {
+        background-image: url('/images/desktop-bg.webp');
+    }
+}

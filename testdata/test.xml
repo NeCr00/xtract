@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100">
+    <image href="/images/svg-image.png" width="100" height="100"/>
+    <image xlink:href="/images/svg-xlink-image.png" width="50" height="50"/>
+    <use href="#icon-arrow"/>
+    <a href="https://link.example.com/svg-link">
+        <text>Click me</text>
+    </a>
+    <script type="text/javascript">
+        fetch('/api/svg/embedded');
+    </script>
+</svg>
