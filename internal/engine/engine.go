@@ -89,6 +89,7 @@ func RunEngine(cfg *model.Config, onProgress func(stats *Stats)) []model.Result 
 	wg.Wait()
 
 	results := rs.Results()
+	results = validateResults(results)
 	results = filterResults(results, cfg)
 	results = sortResults(results)
 	return results

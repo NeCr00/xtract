@@ -9,16 +9,39 @@ import (
 )
 
 // ExtractLayer7 runs Layer 7: Encoded & Obfuscated Recovery (techniques 60-67).
+// Each technique is guarded by a quick marker check.
 func ExtractLayer7(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
-	results = append(results, extractBase64Decode(ctx)...)
-	results = append(results, extractHexDecode(ctx)...)
-	results = append(results, extractUnicodeDecode(ctx)...)
-	results = append(results, extractArrayObfuscation(ctx)...)
-	results = append(results, extractFromCharCode(ctx)...)
-	results = append(results, extractAtobCalls(ctx)...)
-	results = append(results, extractReverseSplitJoin(ctx)...)
-	results = append(results, extractURLConstructor(ctx)...)
+	c := ctx.Content
+
+	// Base64 decoding — skip for large files (>5MB) since regex scanning
+	// for base64 patterns in large bundles is expensive and rarely productive.
+	if len(c) < 5*1024*1024 {
+		results = append(results, extractBase64Decode(ctx)...)
+	}
+
+	if strings.Contains(c, "\\x") {
+		results = append(results, extractHexDecode(ctx)...)
+	}
+	if strings.Contains(c, "\\u") {
+		results = append(results, extractUnicodeDecode(ctx)...)
+	}
+	// Array obfuscation — skip for large files (>2MB) as it's expensive and rare
+	if len(c) < 2*1024*1024 {
+		results = append(results, extractArrayObfuscation(ctx)...)
+	}
+	if strings.Contains(c, "fromCharCode") {
+		results = append(results, extractFromCharCode(ctx)...)
+	}
+	if strings.Contains(c, "atob") {
+		results = append(results, extractAtobCalls(ctx)...)
+	}
+	if strings.Contains(c, ".reverse()") || strings.Contains(c, ".split(") {
+		results = append(results, extractReverseSplitJoin(ctx)...)
+	}
+	if strings.Contains(c, "new URL(") {
+		results = append(results, extractURLConstructor(ctx)...)
+	}
 	return results
 }
 

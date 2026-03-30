@@ -10,10 +10,19 @@ import (
 // ExtractLayer3 runs all Layer 3 (Framework-Aware) techniques and returns results.
 func ExtractLayer3(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
-	results = append(results, extractReactRouter(ctx)...)
-	results = append(results, extractVueRouter(ctx)...)
-	results = append(results, extractAngularRouter(ctx)...)
-	results = append(results, extractNextJS(ctx)...)
+
+	// For large files (>1MB), skip framework-specific router extraction.
+	// These patterns target small app source files; a 10MB bundle is unlikely
+	// to contain literal React/Vue/Angular router definitions, and the
+	// [\s\S]*? patterns can cause O(n^2) behavior on large inputs.
+	isLarge := len(ctx.Content) > 1*1024*1024
+
+	if !isLarge {
+		results = append(results, extractReactRouter(ctx)...)
+		results = append(results, extractVueRouter(ctx)...)
+		results = append(results, extractAngularRouter(ctx)...)
+		results = append(results, extractNextJS(ctx)...)
+	}
 	results = append(results, extractExpressRoutes(ctx)...)
 	results = append(results, extractGraphQLOps(ctx)...)
 	results = append(results, extractRESTInference(ctx)...)
@@ -190,6 +199,11 @@ func extractExpressRoutes(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 	content := ctx.Content
 
+	// Quick check: need "app." or "router." to be present
+	if !strings.Contains(content, "app.") && !strings.Contains(content, "router.") {
+		return results
+	}
+
 	re := model.GetRegex(`(?:app|router)\.(get|post|put|delete|patch|options|head|use)\s*\(\s*["']([^"']+)["']`)
 	matches := re.FindAllStringSubmatchIndex(content, -1)
 	for _, m := range matches {
@@ -224,61 +238,79 @@ func extractGraphQLOps(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 	content := ctx.Content
 
-	// Match query/mutation/subscription operation definitions
-	opRe := model.GetRegex(`(?:query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\)\s*)?\{`)
-	opMatches := opRe.FindAllStringSubmatchIndex(content, -1)
-	for _, m := range opMatches {
-		if len(m) >= 4 {
-			opName := content[m[2]:m[3]]
-			results = append(results, model.Result{
-				URL:             "graphql:" + opName,
-				SourceFile:      ctx.FileName,
-				SourceLine:      model.LineNumber(content, m[0]),
-				DetectionMethod: "graphql_ops",
-				Category:        model.CatAPIEndpoint,
-				Confidence:      model.ConfMedium,
-				TechniqueID:     39,
-			})
-		}
-	}
+	// Quick check: skip if no GraphQL-specific markers present.
+	// Use specific markers — "mutation", "subscription", "query" are too generic
+	// in large JS bundles (DOM MutationObserver, event subscriptions, etc.)
+	hasGraphQLEndpoint := strings.Contains(content, "/graphql") || strings.Contains(content, "/gql")
+	hasGqlTag := strings.Contains(content, "gql`") || strings.Contains(content, "gql `")
 
-	// Match anonymous query/mutation/subscription blocks
-	anonRe := model.GetRegex(`(?:^|[^A-Za-z_])(query|mutation|subscription)\s*\{`)
-	anonMatches := anonRe.FindAllStringSubmatchIndex(content, -1)
-	for _, m := range anonMatches {
-		if len(m) >= 4 {
-			opType := content[m[2]:m[3]]
-			results = append(results, model.Result{
-				URL:             "graphql:" + opType,
-				SourceFile:      ctx.FileName,
-				SourceLine:      model.LineNumber(content, m[0]),
-				DetectionMethod: "graphql_ops",
-				Category:        model.CatAPIEndpoint,
-				Confidence:      model.ConfMedium,
-				TechniqueID:     39,
-			})
+	// For large files, only run the endpoint URL and gql tag patterns (cheap and specific).
+	// The operation definition patterns (query/mutation/subscription + name + {)
+	// cause expensive scans when those common words appear in non-GraphQL contexts.
+	isLargeContent := len(content) > 1*1024*1024
+
+	if !isLargeContent {
+		// Match query/mutation/subscription operation definitions
+		opRe := model.GetRegex(`(?:query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\)\s*)?\{`)
+		opMatches := opRe.FindAllStringSubmatchIndex(content, -1)
+		for _, m := range opMatches {
+			if len(m) >= 4 {
+				opName := content[m[2]:m[3]]
+				results = append(results, model.Result{
+					URL:             "graphql:" + opName,
+					SourceFile:      ctx.FileName,
+					SourceLine:      model.LineNumber(content, m[0]),
+					DetectionMethod: "graphql_ops",
+					Category:        model.CatAPIEndpoint,
+					Confidence:      model.ConfMedium,
+					TechniqueID:     39,
+				})
+			}
+		}
+
+		// Match anonymous query/mutation/subscription blocks
+		anonRe := model.GetRegex(`(?:^|[^A-Za-z_])(query|mutation|subscription)\s*\{`)
+		anonMatches := anonRe.FindAllStringSubmatchIndex(content, -1)
+		for _, m := range anonMatches {
+			if len(m) >= 4 {
+				opType := content[m[2]:m[3]]
+				results = append(results, model.Result{
+					URL:             "graphql:" + opType,
+					SourceFile:      ctx.FileName,
+					SourceLine:      model.LineNumber(content, m[0]),
+					DetectionMethod: "graphql_ops",
+					Category:        model.CatAPIEndpoint,
+					Confidence:      model.ConfMedium,
+					TechniqueID:     39,
+				})
+			}
 		}
 	}
 
 	// Match GraphQL endpoint URLs
-	endpointRe := model.GetRegex(`["']([^"']*(?:/graphql|/gql)[^"']*)["']`)
-	epMatches := endpointRe.FindAllStringSubmatchIndex(content, -1)
-	for _, m := range epMatches {
-		if len(m) >= 4 {
-			url := content[m[2]:m[3]]
-			results = append(results, model.Result{
-				URL:             url,
-				SourceFile:      ctx.FileName,
-				SourceLine:      model.LineNumber(content, m[0]),
-				DetectionMethod: "graphql_ops",
-				Category:        model.CatAPIEndpoint,
-				Confidence:      model.ConfMedium,
-				TechniqueID:     39,
-			})
+	if hasGraphQLEndpoint {
+		endpointRe := model.GetRegex(`["']([^"']*(?:/graphql|/gql)[^"']*)["']`)
+		epMatches := endpointRe.FindAllStringSubmatchIndex(content, -1)
+		for _, m := range epMatches {
+			if len(m) >= 4 {
+				url := content[m[2]:m[3]]
+				results = append(results, model.Result{
+					URL:             url,
+					SourceFile:      ctx.FileName,
+					SourceLine:      model.LineNumber(content, m[0]),
+					DetectionMethod: "graphql_ops",
+					Category:        model.CatAPIEndpoint,
+					Confidence:      model.ConfMedium,
+					TechniqueID:     39,
+				})
+			}
 		}
 	}
 
 	// Match gql tagged template literals and extract operation names inside them
+	if !hasGqlTag {
+		return results
+	}
 	gqlTagRe := model.GetRegex("gql\\s*`([^`]*)`")
 	gqlMatches := gqlTagRe.FindAllStringSubmatchIndex(content, -1)
 	for _, m := range gqlMatches {
@@ -310,6 +342,11 @@ func extractGraphQLOps(ctx *model.ExtractionContext) []model.Result {
 func extractRESTInference(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 	content := ctx.Content
+
+	// Quick check: skip if no /api/ marker present
+	if !strings.Contains(content, "/api/") {
+		return results
+	}
 
 	// Find paths that look like /api/<resource> where resource is a plural noun
 	re := model.GetRegex(`["'](/api/[a-z][a-z0-9_-]*s)(?:/[^"']*)?["']`)

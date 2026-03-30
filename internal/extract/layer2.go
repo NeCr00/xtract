@@ -7,29 +7,93 @@ import (
 	"github.com/NeCr00/xtract/internal/model"
 )
 
+// layer2Markers lists all substring markers needed by Layer 2 techniques.
+// A single scan of the content checks all of them at once.
+var layer2Markers = []string{
+	"fetch", ".open(", "axios", "$.", "jQuery", "sendBeacon",
+	"EventSource", "WebSocket", "import(", "require(",
+	"location", "window.", ".src", ".href", "setAttribute",
+	"innerHTML", "outerHTML", "postMessage", "<form", "action=",
+	"serviceWorker", "Worker(", "require.ensure", "require.context",
+	"__webpack_require__", "createElement",
+}
+
+// scanMarkers does a single pass over the content and returns a set of
+// which markers are present. Much faster than N separate strings.Contains
+// calls on multi-MB content.
+func scanMarkers(content string, markers []string) map[string]bool {
+	found := make(map[string]bool, len(markers))
+	for _, m := range markers {
+		if strings.Contains(content, m) {
+			found[m] = true
+		}
+	}
+	return found
+}
+
 // ExtractLayer2 runs all AST-based extraction techniques (15-33) and returns
-// the combined results.
+// the combined results. A single marker scan gates each technique.
 func ExtractLayer2(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
-	results = append(results, extractFetchCalls(ctx)...)
-	results = append(results, extractXMLHttpRequest(ctx)...)
-	results = append(results, extractAxiosCalls(ctx)...)
-	results = append(results, extractJQueryAjax(ctx)...)
-	results = append(results, extractSendBeacon(ctx)...)
-	results = append(results, extractEventSourceWebSocket(ctx)...)
-	results = append(results, extractDynamicImport(ctx)...)
-	results = append(results, extractRequireCalls(ctx)...)
-	results = append(results, extractLocationAssign(ctx)...)
-	results = append(results, extractWindowOpen(ctx)...)
-	results = append(results, extractElementSrcHref(ctx)...)
-	results = append(results, extractSetAttribute(ctx)...)
-	results = append(results, extractInnerHTMLURLs(ctx)...)
-	results = append(results, extractPostMessage(ctx)...)
-	results = append(results, extractFormAction(ctx)...)
-	results = append(results, extractServiceWorker(ctx)...)
-	results = append(results, extractWebWorker(ctx)...)
-	results = append(results, extractWebpackRequire(ctx)...)
-	results = append(results, extractDynamicScript(ctx)...)
+	m := scanMarkers(ctx.Content, layer2Markers)
+
+	if m["fetch"] {
+		results = append(results, extractFetchCalls(ctx)...)
+	}
+	if m[".open("] {
+		results = append(results, extractXMLHttpRequest(ctx)...)
+	}
+	if m["axios"] {
+		results = append(results, extractAxiosCalls(ctx)...)
+	}
+	if m["$."] || m["jQuery"] {
+		results = append(results, extractJQueryAjax(ctx)...)
+	}
+	if m["sendBeacon"] {
+		results = append(results, extractSendBeacon(ctx)...)
+	}
+	if m["EventSource"] || m["WebSocket"] {
+		results = append(results, extractEventSourceWebSocket(ctx)...)
+	}
+	if m["import("] {
+		results = append(results, extractDynamicImport(ctx)...)
+	}
+	if m["require("] {
+		results = append(results, extractRequireCalls(ctx)...)
+	}
+	if m["location"] {
+		results = append(results, extractLocationAssign(ctx)...)
+	}
+	if m["window."] && m[".open("] {
+		results = append(results, extractWindowOpen(ctx)...)
+	}
+	if m[".src"] || m[".href"] {
+		results = append(results, extractElementSrcHref(ctx)...)
+	}
+	if m["setAttribute"] {
+		results = append(results, extractSetAttribute(ctx)...)
+	}
+	if m["innerHTML"] || m["outerHTML"] {
+		results = append(results, extractInnerHTMLURLs(ctx)...)
+	}
+	if m["postMessage"] {
+		results = append(results, extractPostMessage(ctx)...)
+	}
+	if m["<form"] || m["action="] {
+		results = append(results, extractFormAction(ctx)...)
+	}
+	if m["serviceWorker"] {
+		results = append(results, extractServiceWorker(ctx)...)
+	}
+	if m["Worker("] {
+		results = append(results, extractWebWorker(ctx)...)
+	}
+	if m["require.ensure"] || m["require.context"] || m["__webpack_require__"] {
+		results = append(results, extractWebpackRequire(ctx)...)
+	}
+	if m["createElement"] {
+		results = append(results, extractDynamicScript(ctx)...)
+	}
 	return results
 }
 

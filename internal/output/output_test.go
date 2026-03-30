@@ -114,8 +114,7 @@ func TestWriteText_NewlinesSanitized(t *testing.T) {
 func TestWriteJSONLines(t *testing.T) {
 	var buf bytes.Buffer
 	results := testResults()
-	cfg := &model.Config{}
-	writeJSONLines(&buf, results, cfg)
+	writeJSONLines(&buf, results)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 {

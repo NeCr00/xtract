@@ -12,7 +12,7 @@ import (
 	"github.com/NeCr00/xtract/internal/output"
 )
 
-const version = "1.0.0"
+const version = "1.2.0"
 
 // banner is the ASCII art header printed on startup.
 const banner = `
@@ -57,10 +57,11 @@ func main() {
 	verbose := flag.Bool("v", false, "Verbose output (per-file details to stderr)")
 	debug := flag.Bool("debug", false, "Debug output showing technique details")
 	quiet := flag.Bool("q", false, "Quiet mode: suppress all stderr output")
-	outputFile := flag.String("o", "", "Output file path")
-	jsonOutput := flag.Bool("json", false, "JSON Lines output")
-	csvOutput := flag.Bool("csv", false, "CSV output")
-	urlsOnly := flag.Bool("urls-only", false, "Only raw URLs (default behavior)")
+	outputFile := flag.String("o", "", "Single-file output (plain/json/csv)")
+	outputDir := flag.String("oD", "", "Output directory for categorized results (default: xtract_output)")
+	jsonOutput := flag.Bool("json", false, "JSON Lines output to stdout or -o file")
+	csvOutput := flag.Bool("csv", false, "CSV output to stdout or -o file")
+	urlsOnly := flag.Bool("urls-only", false, "Flat URL list to stdout (skip directory output)")
 	withParams := flag.Bool("with-params", false, "Include parameter names")
 	withMethods := flag.Bool("with-methods", false, "Include HTTP methods")
 	withSource := flag.Bool("with-source", false, "Include source file info")
@@ -119,6 +120,7 @@ func main() {
 		Quiet:          *quiet,
 		ListTechniques: *listTechniques,
 		OutputFile:     *outputFile,
+		OutputDir:      *outputDir,
 		JSONOutput:     *jsonOutput,
 		CSVOutput:      *csvOutput,
 		URLsOnly:       *urlsOnly,
@@ -390,13 +392,17 @@ Processing Options:
   -max-size N     Max file size in MB (default: 100)
 
 Output Format:
-  -o FILE         Write output to file
-  -json           JSON Lines output (one object per line)
-  -csv            CSV output with headers
-  -urls-only      Only raw URLs, one per line (default)
+  -oD DIR         Output directory for categorized results (default: xtract_output/)
+  -o FILE         Single-file output (use with -json or -csv)
+  -json           JSON Lines output to stdout or -o file
+  -csv            CSV output to stdout or -o file
   -with-params    Include parameter names after URL
   -with-methods   Prepend HTTP method before URL
   -with-source    Append source file and line number
+
+  By default, results are written to xtract_output/ with separate files
+  per category (api_endpoints.txt, page_routes.txt, etc.) plus all_urls.txt
+  and results.json. Use -json or -csv to write to stdout instead.
 
 Filtering:
   -scope DOMAIN   Only output URLs containing this domain

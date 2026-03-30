@@ -15,6 +15,7 @@ type Config struct {
 	Quiet          bool
 	ListTechniques bool
 	OutputFile     string
+	OutputDir      string
 	JSONOutput     bool
 	CSVOutput      bool
 	URLsOnly       bool

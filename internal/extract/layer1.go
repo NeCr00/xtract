@@ -116,26 +116,55 @@ func extractRelativePaths(ctx *model.ExtractionContext) []model.Result {
 func extractAPIPatterns(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 
-	// Match API-style paths
-	patterns := []string{
-		// /api/v1/..., /api/...
-		`(?:"|'|` + "`" + `|=\s*)((?:/api/v\d+(?:/[a-zA-Z0-9_\-~.%{}:]+)*)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
-		`(?:"|'|` + "`" + `|=\s*)((?:/api(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
+	// Match API-style paths. Each entry has a quick-check literal that must
+	// appear in the content before we bother running the expensive regex.
+	type apiPattern struct {
+		marker string // literal that must be present for this pattern to fire
+		regex  string
+	}
+	patterns := []apiPattern{
+		// /api/v1/..., /api/... (combined into one regex to avoid two 10MB scans)
+		{"/api/", `(?:"|'|` + "`" + `|=\s*)((?:/api(?:/v\d+)?(?:/[a-zA-Z0-9_\-~.%{}:]+)*)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`},
 		// /graphql
-		`(?:"|'|` + "`" + `|=\s*)((?:/graphql(?:/[a-zA-Z0-9_\-~.%{}:]*)*)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
+		{"/graphql", `(?:"|'|` + "`" + `|=\s*)((?:/graphql(?:/[a-zA-Z0-9_\-~.%{}:]*)*)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`},
 		// /rest/...
-		`(?:"|'|` + "`" + `|=\s*)((?:/rest(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
+		{"/rest/", `(?:"|'|` + "`" + `|=\s*)((?:/rest(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`},
 		// /rpc/...
-		`(?:"|'|` + "`" + `|=\s*)((?:/rpc(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
+		{"/rpc/", `(?:"|'|` + "`" + `|=\s*)((?:/rpc(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`},
 		// /ws/... (websocket paths)
-		`(?:"|'|` + "`" + `|=\s*)((?:/ws(?:/[a-zA-Z0-9_\-~.%{}:]+)*)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
-		// /v1/..., /v2/... etc (versioned API patterns)
-		`(?:"|'|` + "`" + `|=\s*)((?:/v\d+(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`,
+		{"/ws/", `(?:"|'|` + "`" + `|=\s*)((?:/ws(?:/[a-zA-Z0-9_\-~.%{}:]+)*)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`},
+		// /v1/..., /v2/... etc (versioned API patterns) — use empty marker; checked below
+		{"", `(?:"|'|` + "`" + `|=\s*)((?:/v\d+(?:/[a-zA-Z0-9_\-~.%{}:]+)+)(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `|\s|$|;|,)`},
+	}
+
+	// Pre-check: does content contain /v followed by a digit?
+	hasVersionedAPI := false
+	if idx := strings.Index(ctx.Content, "/v"); idx >= 0 {
+		// Scan for /v\d pattern
+		for i := idx; i < len(ctx.Content)-2; i++ {
+			if ctx.Content[i] == '/' && ctx.Content[i+1] == 'v' && ctx.Content[i+2] >= '0' && ctx.Content[i+2] <= '9' {
+				hasVersionedAPI = true
+				break
+			}
+			next := strings.Index(ctx.Content[i+1:], "/v")
+			if next < 0 {
+				break
+			}
+			i += next
+		}
 	}
 
 	seen := make(map[string]bool)
-	for _, pat := range patterns {
-		re := model.GetRegex(pat)
+	for _, ap := range patterns {
+		if ap.marker == "" {
+			// Special case for versioned API pattern
+			if !hasVersionedAPI {
+				continue
+			}
+		} else if !strings.Contains(ctx.Content, ap.marker) {
+			continue
+		}
+		re := model.GetRegex(ap.regex)
 		for _, match := range re.FindAllStringSubmatchIndex(ctx.Content, -1) {
 			if match[2] < 0 {
 				continue
@@ -203,6 +232,10 @@ func extractQueryStrings(ctx *model.ExtractionContext) []model.Result {
 	}
 
 	// Also look for standalone query params in assignment patterns: param=value&param2=
+	// Skip for large files — these are caught by the main pattern above.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
 	reStandalone := model.GetRegex(`(?:"|'|` + "`" + `)(\?[a-zA-Z_][a-zA-Z0-9_\-]*=[^"'\x60\s]+)(?:"|'|` + "`" + `)`)
 	for _, match := range reStandalone.FindAllStringSubmatchIndex(ctx.Content, -1) {
 		if match[2] < 0 {
@@ -242,6 +275,11 @@ func extractQueryStrings(ctx *model.ExtractionContext) []model.Result {
 func extractHashFragments(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 
+	// Quick check: skip if no hash-route marker present
+	if !strings.Contains(ctx.Content, "#/") {
+		return results
+	}
+
 	// SPA hash routes: #/ followed by path segments
 	re := model.GetRegex(`(?:"|'|` + "`" + `)(#/[a-zA-Z0-9_\-/.~%:]+(?:\?[^"'\x60\s<>]*)?)(?:"|'|` + "`" + `)`)
 
@@ -262,6 +300,10 @@ func extractHashFragments(ctx *model.ExtractionContext) []model.Result {
 	}
 
 	// Also match hash routes in href attributes: href="#/..."
+	// Skip for large files — the pattern above already catches these.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
 	reAttr := model.GetRegex(`(?i)href\s*=\s*(?:"|')(#/[a-zA-Z0-9_\-/.~%:]+(?:\?[^"'\s<>]*)?)(?:"|')`)
 	for _, match := range reAttr.FindAllStringSubmatchIndex(ctx.Content, -1) {
 		if match[2] < 0 {
@@ -285,6 +327,12 @@ func extractHashFragments(ctx *model.ExtractionContext) []model.Result {
 // technique6: Template literals with ${...} interpolation
 func extractTemplateLiterals(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
+
+	// Skip for large files — template literal scanning is expensive and largely
+	// redundant with techniques 1-3 which already extract URLs from all contexts.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
 
 	// Match backtick-delimited strings containing ${ } and path-like content
 	// Use [^}]* inside ${} to match the expression, then allow more content after
@@ -326,6 +374,12 @@ func extractTemplateLiterals(ctx *model.ExtractionContext) []model.Result {
 // technique7: String concatenation path assembly
 func extractStringConcatenation(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
+
+	// Skip for large files — concatenation regex can backtrack on big inputs
+	// and results are mostly redundant with other techniques.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
 
 	// Match patterns like "path/" + variable + "/more" or 'path/' + variable + '/more'
 	// Also handles: baseUrl + "/api/users"
@@ -399,6 +453,11 @@ func reassembleConcatenation(expr string) string {
 func extractDataURIs(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 
+	// Quick check: skip if no data: marker present
+	if !strings.Contains(ctx.Content, "data:") {
+		return results
+	}
+
 	re := model.GetRegex(`(?i)(data:[a-zA-Z0-9]+/[a-zA-Z0-9+.\-]+(?:;[a-zA-Z0-9\-]+=?[a-zA-Z0-9\-]*)*(?:;base64)?,(?:[A-Za-z0-9+/=]|%[0-9A-Fa-f][0-9A-Fa-f])*)`)
 
 	for _, match := range re.FindAllStringSubmatchIndex(ctx.Content, -1) {
@@ -429,40 +488,51 @@ func extractDataURIs(ctx *model.ExtractionContext) []model.Result {
 func extractBlobJavascriptURIs(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 
+	// Quick check: skip entirely if neither marker is present
+	hasBlob := strings.Contains(ctx.Content, "blob:")
+	hasJavascript := strings.Contains(ctx.Content, "javascript:")
+	if !hasBlob && !hasJavascript {
+		return results
+	}
+
 	// blob: URIs
-	reBlob := model.GetRegex(`(?i)(blob:(?:https?://)?[^\s"'\x60<>]{3,})`)
-	for _, match := range reBlob.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
+	if hasBlob {
+		reBlob := model.GetRegex(`(?i)(blob:(?:https?://)?[^\s"'\x60<>]{3,})`)
+		for _, match := range reBlob.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			url := cleanTrailingURL(ctx.Content[match[2]:match[3]])
+			results = append(results, model.Result{
+				URL:             url,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "blob_javascript_uris",
+				Category:        model.CategorizeURL(url),
+				Confidence:      model.ConfMedium,
+				TechniqueID:     9,
+			})
 		}
-		url := cleanTrailingURL(ctx.Content[match[2]:match[3]])
-		results = append(results, model.Result{
-			URL:             url,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "blob_javascript_uris",
-			Category:        model.CategorizeURL(url),
-			Confidence:      model.ConfMedium,
-			TechniqueID:     9,
-		})
 	}
 
 	// javascript: URIs
-	reJS := model.GetRegex(`(?i)(javascript:[^\s"'\x60<>]+)`)
-	for _, match := range reJS.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
+	if hasJavascript {
+		reJS := model.GetRegex(`(?i)(javascript:[^\s"'\x60<>]+)`)
+		for _, match := range reJS.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			url := cleanTrailingURL(ctx.Content[match[2]:match[3]])
+			results = append(results, model.Result{
+				URL:             url,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "blob_javascript_uris",
+				Category:        model.CategorizeURL(url),
+				Confidence:      model.ConfMedium,
+				TechniqueID:     9,
+			})
 		}
-		url := cleanTrailingURL(ctx.Content[match[2]:match[3]])
-		results = append(results, model.Result{
-			URL:             url,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "blob_javascript_uris",
-			Category:        model.CategorizeURL(url),
-			Confidence:      model.ConfMedium,
-			TechniqueID:     9,
-		})
 	}
 
 	return results
@@ -471,6 +541,11 @@ func extractBlobJavascriptURIs(ctx *model.ExtractionContext) []model.Result {
 // technique10: Mailto links
 func extractMailtoLinks(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
+
+	// Quick check: skip if no mailto: marker
+	if !strings.Contains(ctx.Content, "mailto:") {
+		return results
+	}
 
 	re := model.GetRegex(`(?i)(mailto:[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:\?[^\s"'\x60<>]*)?)`)
 
@@ -496,6 +571,12 @@ func extractMailtoLinks(ctx *model.ExtractionContext) []model.Result {
 // technique11: IP-based URLs (IPv4 and IPv6)
 func extractIPBasedURLs(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
+
+	// For large files, skip this technique entirely if content doesn't contain
+	// any IP-like markers. The absolute URL technique already catches http://IP URLs.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
 
 	// IPv4: http(s)://N.N.N.N[:port][/path]
 	reIPv4 := model.GetRegex(`(?i)(https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?(?:/[^\s"'\x60<>]*)?)`)
@@ -581,134 +662,158 @@ func isValidIPv4(s string) bool {
 func extractEncodedURLs(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 
+	// Skip entirely for large files — encoded URL scanning is expensive and
+	// largely redundant with the absolute URL technique which already catches
+	// most encoded URLs. The rare encoded paths in large bundles are not worth
+	// the O(n) regex scans.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
+
+	// For smaller files, only run sub-patterns when their encoding markers are present.
+	hasPercent := strings.Contains(ctx.Content, "%2F") || strings.Contains(ctx.Content, "%2f") || strings.Contains(ctx.Content, "%3A") || strings.Contains(ctx.Content, "%3a")
+	hasUnicode := strings.Contains(ctx.Content, "\\u00")
+	hasHexEsc := strings.Contains(ctx.Content, "\\x2")
+	hasHTMLEnt := strings.Contains(ctx.Content, "&#")
+
 	// URL-encoded strings containing %2F (/) which indicates encoded paths
-	reURLEnc := model.GetRegex(`(?i)((?:https?(?:%3A|:)(?:%2F|/){2}|%2F)[^\s"'\x60<>]*%[0-9A-Fa-f]{2}[^\s"'\x60<>]*)`)
-	for _, match := range reURLEnc.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
+	if hasPercent {
+		reURLEnc := model.GetRegex(`(?i)((?:https?(?:%3A|:)(?:%2F|/){2}|%2F)[^\s"'\x60<>]*%[0-9A-Fa-f]{2}[^\s"'\x60<>]*)`)
+		for _, match := range reURLEnc.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			raw := ctx.Content[match[2]:match[3]]
+			decoded := decodeURLEncoding(raw)
+			if decoded != raw {
+				// First pass decoded something; try double decode
+				decoded = decodeURLEncoding(decoded)
+			}
+			decoded = cleanTrailingURL(decoded)
+			if decoded == "" {
+				continue
+			}
+			results = append(results, model.Result{
+				URL:             decoded,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "encoded_urls",
+				Category:        model.CategorizeURL(decoded),
+				Confidence:      model.ConfMedium,
+				TechniqueID:     12,
+			})
 		}
-		raw := ctx.Content[match[2]:match[3]]
-		decoded := decodeURLEncoding(raw)
-		if decoded != raw {
-			// First pass decoded something; try double decode
-			decoded = decodeURLEncoding(decoded)
-		}
-		decoded = cleanTrailingURL(decoded)
-		if decoded == "" {
-			continue
-		}
-		results = append(results, model.Result{
-			URL:             decoded,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "encoded_urls",
-			Category:        model.CategorizeURL(decoded),
-			Confidence:      model.ConfMedium,
-			TechniqueID:     12,
-		})
 	}
 
 	// Unicode-escaped strings: \u002F = /
-	reUnicode := model.GetRegex(`((?:\\u[0-9A-Fa-f]{4}){3,})`)
-	for _, match := range reUnicode.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
+	if hasUnicode {
+		reUnicode := model.GetRegex(`((?:\\u[0-9A-Fa-f]{4}){3,})`)
+		for _, match := range reUnicode.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			raw := ctx.Content[match[2]:match[3]]
+			decoded := decodeUnicodeEscapes(raw)
+			if !strings.Contains(decoded, "/") && !strings.Contains(decoded, ".") {
+				continue
+			}
+			decoded = cleanTrailingURL(decoded)
+			if decoded == "" || len(decoded) < 3 {
+				continue
+			}
+			results = append(results, model.Result{
+				URL:             decoded,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "encoded_urls",
+				Category:        model.CategorizeURL(decoded),
+				Confidence:      model.ConfMedium,
+				TechniqueID:     12,
+			})
 		}
-		raw := ctx.Content[match[2]:match[3]]
-		decoded := decodeUnicodeEscapes(raw)
-		if !strings.Contains(decoded, "/") && !strings.Contains(decoded, ".") {
-			continue
-		}
-		decoded = cleanTrailingURL(decoded)
-		if decoded == "" || len(decoded) < 3 {
-			continue
-		}
-		results = append(results, model.Result{
-			URL:             decoded,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "encoded_urls",
-			Category:        model.CategorizeURL(decoded),
-			Confidence:      model.ConfMedium,
-			TechniqueID:     12,
-		})
 	}
 
 	// Hex-escaped strings: \x2F = /
-	reHex := model.GetRegex(`((?:\\x[0-9A-Fa-f]{2}){3,})`)
-	for _, match := range reHex.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
+	if hasHexEsc {
+		reHex := model.GetRegex(`((?:\\x[0-9A-Fa-f]{2}){3,})`)
+		for _, match := range reHex.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			raw := ctx.Content[match[2]:match[3]]
+			decoded := decodeHexEscapes(raw)
+			if !strings.Contains(decoded, "/") && !strings.Contains(decoded, ".") {
+				continue
+			}
+			decoded = cleanTrailingURL(decoded)
+			if decoded == "" || len(decoded) < 3 {
+				continue
+			}
+			results = append(results, model.Result{
+				URL:             decoded,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "encoded_urls",
+				Category:        model.CategorizeURL(decoded),
+				Confidence:      model.ConfMedium,
+				TechniqueID:     12,
+			})
 		}
-		raw := ctx.Content[match[2]:match[3]]
-		decoded := decodeHexEscapes(raw)
-		if !strings.Contains(decoded, "/") && !strings.Contains(decoded, ".") {
-			continue
-		}
-		decoded = cleanTrailingURL(decoded)
-		if decoded == "" || len(decoded) < 3 {
-			continue
-		}
-		results = append(results, model.Result{
-			URL:             decoded,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "encoded_urls",
-			Category:        model.CategorizeURL(decoded),
-			Confidence:      model.ConfMedium,
-			TechniqueID:     12,
-		})
 	}
 
 	// HTML entity-encoded: &#x2F; = /, &#47; = /
-	reHTML := model.GetRegex(`((?:&#x?[0-9A-Fa-f]+;){3,})`)
-	for _, match := range reHTML.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
+	if hasHTMLEnt {
+		reHTML := model.GetRegex(`((?:&#x?[0-9A-Fa-f]+;){3,})`)
+		for _, match := range reHTML.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			raw := ctx.Content[match[2]:match[3]]
+			decoded := decodeHTMLEntities(raw)
+			if !strings.Contains(decoded, "/") && !strings.Contains(decoded, ".") {
+				continue
+			}
+			decoded = cleanTrailingURL(decoded)
+			if decoded == "" || len(decoded) < 3 {
+				continue
+			}
+			results = append(results, model.Result{
+				URL:             decoded,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "encoded_urls",
+				Category:        model.CategorizeURL(decoded),
+				Confidence:      model.ConfMedium,
+				TechniqueID:     12,
+			})
 		}
-		raw := ctx.Content[match[2]:match[3]]
-		decoded := decodeHTMLEntities(raw)
-		if !strings.Contains(decoded, "/") && !strings.Contains(decoded, ".") {
-			continue
-		}
-		decoded = cleanTrailingURL(decoded)
-		if decoded == "" || len(decoded) < 3 {
-			continue
-		}
-		results = append(results, model.Result{
-			URL:             decoded,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "encoded_urls",
-			Category:        model.CategorizeURL(decoded),
-			Confidence:      model.ConfMedium,
-			TechniqueID:     12,
-		})
 	}
 
 	// Also look for full strings that contain a mix of encoded and literal characters
-	reMixed := model.GetRegex(`(?:"|'|` + "`" + `)([^"'\x60]*(?:%2[Ff]|\\u002[Ff]|\\x2[Ff]|&#(?:x2[Ff]|47);)[^"'\x60]*)(?:"|'|` + "`" + `)`)
-	seen := make(map[string]bool)
-	for _, match := range reMixed.FindAllStringSubmatchIndex(ctx.Content, -1) {
-		if match[2] < 0 {
-			continue
-		}
-		raw := ctx.Content[match[2]:match[3]]
-		decoded := decodeAllEncodings(raw)
-		decoded = cleanTrailingURL(decoded)
-		if decoded == "" || len(decoded) < 3 || seen[decoded] {
-			continue
-		}
-		seen[decoded] = true
-		results = append(results, model.Result{
-			URL:             decoded,
-			SourceFile:      ctx.FileName,
-			SourceLine:      model.LineNumber(ctx.Content, match[2]),
-			DetectionMethod: "encoded_urls",
-			Category:        model.CategorizeURL(decoded),
-			Confidence:      model.ConfMedium,
+	if hasPercent || hasUnicode || hasHexEsc || hasHTMLEnt {
+		reMixed := model.GetRegex(`(?:"|'|` + "`" + `)([^"'\x60]*(?:%2[Ff]|\\u002[Ff]|\\x2[Ff]|&#(?:x2[Ff]|47);)[^"'\x60]*)(?:"|'|` + "`" + `)`)
+		seen := make(map[string]bool)
+		for _, match := range reMixed.FindAllStringSubmatchIndex(ctx.Content, -1) {
+			if match[2] < 0 {
+				continue
+			}
+			raw := ctx.Content[match[2]:match[3]]
+			decoded := decodeAllEncodings(raw)
+			decoded = cleanTrailingURL(decoded)
+			if decoded == "" || len(decoded) < 3 || seen[decoded] {
+				continue
+			}
+			seen[decoded] = true
+			results = append(results, model.Result{
+				URL:             decoded,
+				SourceFile:      ctx.FileName,
+				SourceLine:      model.LineNumber(ctx.Content, match[2]),
+				DetectionMethod: "encoded_urls",
+				Category:        model.CategorizeURL(decoded),
+				Confidence:      model.ConfMedium,
 			TechniqueID:     12,
-		})
+			})
+		}
 	}
 
 	return results
@@ -820,6 +925,28 @@ func unhex(c byte) byte {
 func extractCustomProtocols(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
 
+	// Quick check: only run the expensive alternation regex if at least one
+	// of these protocol prefixes appears in the content. This avoids a 2.5s
+	// regex scan on large files that contain none of these schemes.
+	// Use a fast literal scan rather than ToLower on the whole content.
+	protocolMarkers := []string{
+		"ndroid-app://", "os-app://", "ntent://", "eeplink://",
+		"fb://", "witter://", "hatsapp://", "tg://", "lack://",
+		"iber://", "line://", "tel://", "sms://", "geo://",
+		"aps://", "arket://", "tms-app", "ebcal://",
+		"vn+ssh://", "ssh://", "s3://", "gs://", "az://",
+	}
+	hasAny := false
+	for _, p := range protocolMarkers {
+		if strings.Contains(ctx.Content, p) {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return results
+	}
+
 	// Match android-app://, ios-app://, intent://, deeplink://, and other custom schemes
 	re := model.GetRegex(`(?i)((?:android-app|ios-app|intent|deeplink|fb|twitter|whatsapp|tg|slack|viber|line|tel|sms|geo|maps|market|itms-apps?|webcal|svn\+ssh|ssh|s3|gs|az)://[^\s"'\x60<>)]+)`)
 
@@ -863,6 +990,13 @@ func extractCustomProtocols(ctx *model.ExtractionContext) []model.Result {
 // technique14: Path patterns inside string literals
 func extractStringLiterals(ctx *model.ExtractionContext) []model.Result {
 	var results []model.Result
+
+	// Skip for large files — this scans every quoted string in the entire file
+	// and is highly redundant with techniques 1 (absolute URLs), 2 (relative paths),
+	// and 3 (API patterns) which already extract paths from quoted contexts.
+	if len(ctx.Content) > 2*1024*1024 {
+		return results
+	}
 
 	// Match paths inside double-quoted strings
 	reDouble := model.GetRegex(`"((?:/[a-zA-Z0-9_\-~.%@:{}]+)+(?:\.[a-zA-Z0-9]+)?(?:\?[^"\s]*)?)"`)
