@@ -1,4 +1,4 @@
-module github.com/pentester/xtract
+module github.com/NeCr00/xtract
 
 go 1.22
 
