@@ -3,7 +3,7 @@ package extract
 import (
 	"strings"
 
-	"github.com/pentester/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/model"
 )
 
 // ExtractLayer6 runs Layer 6: Comments & Developer Artifacts (techniques 54-59).

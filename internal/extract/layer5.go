@@ -1,6 +1,6 @@
 package extract
 
-import "github.com/pentester/xtract/internal/model"
+import "github.com/Necr00/xtract/internal/model"
 
 // ExtractLayer5 runs Layer 5: Subdomain & Infrastructure Discovery (techniques 50-53).
 func ExtractLayer5(ctx *model.ExtractionContext) []model.Result {

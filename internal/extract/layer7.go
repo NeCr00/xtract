@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pentester/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/model"
 )
 
 // ExtractLayer7 runs Layer 7: Encoded & Obfuscated Recovery (techniques 60-67).

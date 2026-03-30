@@ -1,9 +1,10 @@
 package extract
 
 import (
-	"github.com/pentester/xtract/internal/model"
 	"regexp"
 	"strings"
+
+	"github.com/Necr00/xtract/internal/model"
 )
 
 // ExtractLayer2 runs all AST-based extraction techniques (15-33) and returns

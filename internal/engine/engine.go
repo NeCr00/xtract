@@ -7,10 +7,10 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pentester/xtract/internal/extract"
-	"github.com/pentester/xtract/internal/input"
-	"github.com/pentester/xtract/internal/model"
-	"github.com/pentester/xtract/internal/parser"
+	"github.com/Necr00/xtract/internal/extract"
+	"github.com/Necr00/xtract/internal/input"
+	"github.com/Necr00/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/parser"
 )
 
 // RunEngine orchestrates parallel extraction across all input items.

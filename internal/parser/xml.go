@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"github.com/pentester/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/model"
 )
 
 // ParseXML extracts URLs from XML/SVG content using regex-based matching.

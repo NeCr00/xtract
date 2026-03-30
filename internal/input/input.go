@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pentester/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/model"
 )
 
 // supportedExtensions lists file extensions that the tool can process.
@@ -326,7 +326,6 @@ func SniffFileType(content []byte) string {
 		return "unknown"
 	}
 }
-
 
 // IsBinary checks if content appears to be binary by looking for null bytes
 // in the first 8000 bytes.

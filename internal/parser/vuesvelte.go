@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"github.com/pentester/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/model"
 )
 
 // ParseVueSvelte parses Vue SFC (.vue) and Svelte (.svelte) files by extracting

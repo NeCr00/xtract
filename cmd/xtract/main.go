@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pentester/xtract/internal/engine"
-	"github.com/pentester/xtract/internal/model"
-	"github.com/pentester/xtract/internal/output"
+	"github.com/Necr00/xtract/internal/engine"
+	"github.com/Necr00/xtract/internal/model"
+	"github.com/Necr00/xtract/internal/output"
 )
 
 const version = "1.0.0"
